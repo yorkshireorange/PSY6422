@@ -1,0 +1,296 @@
+---
+title: "Covid-19-immunised to total region population ratio in the Czech Republic"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+require(kableExtra)
+require(here)
+require(ggplot2)
+require(sf)
+require(splitChunk)
+require(png)
+knitr::opts_chunk$set(echo = TRUE, fig.width=16, fig.height=12)
+```
+
+## Introduction
+
+The development and distribution of Covid-19 vaccines in response to the Covid-19 pandemic demonstrated the world's ability to act quickly and face threats to public health threats. The data that the ongoing vaccination has been generating can provide an interesting insight into the effect of governments' policies concerning vaccine distribution and immunisation eligibility, the willingness of individuals within certain areas to receive immunisation, etc.
+
+In the Czech Republic, Covid-19 data are freely available through the government's Open Data service [1], which (in collaboration with the National Dashboard of Active Diseases [2]) provides well-made and informative visualisations; these are mostly interactive maps with user-adaptable controls. Currently, the official sources do not provide any information about, or visualisations of, the ratio of fully immunised residents (i.e., those who received 2 doses of an approved Covid-19 vaccine) to the total region population.
+
+### Project Objective
+
+-   To create a map of the Czech Republic showing the ratio of fully immunised to total population per region.
+
+### Visualisation Questions
+
+-   Is the the ratio of fully immunised to total population per region homogeneous across the whole country?
+    -   If heterogeneity is observed, what is (roughly) the difference between the regions with the highest and the lowest ratios?
+
+## Data
+
+### Origins & Extraction
+
+*Notes:*
+
+-   All used data sets were created in a non-English-speaking environment and contained special characters, therefore UTF-8 encoding is used for reading and saving the data sets.
+
+-   Reading and saving UTF-8 data sets changes the name of the first column in the data set. There did not seem to be a workaround and therefore changed name of the first column is therefore reflected in the code and data set previews.
+
+#### Immunisation data
+
+-   Czech Covid-19 statistics are published and updated daily by the Ministry of Health [3] on its National Dashboard of Active Diseases. The dashboard provides statistics, visualisations, and access to a number of more or less aggregated data files. Data can be accessed through API as well as downloaded directly (.csv).
+
+-   Data collection, management, and publishing is managed by the Institute of Health Information and Statistics of the Czech Republic [4] through the National Health Information System (NHIS) and its subsystems, which pool data shared by individuals and institutions managing case tracking and healthcare (i.e., healthcare providers and regional public health offices).
+
+-   The vaccine uptake data set is updated daily (except for weekends) and available from the dashboard:\
+    `https://onemocneni-aktualne.mzcr.cz/api/v2/covid-19/ockovani-orp.csv`
+
+#### Population data
+
+-   Summary population statistics are published by the Czech Statistical Office on its website [5] and updated annually. They are compiled based on observed births, deaths, and within-country mobility. Additionally, the data is checked when the outcomes of the most recent census become available.
+-   The data set is available on the website, however it is formatted for user-friendly viewing rather than data processing and was therefore pre-processed and saved in the project data folder.
+-   The original data set is accessible through the following catalogue:\
+    `https://www.czso.cz/csu/czso/population-of-municipalities-1-january-2021`\
+    or directly through the following download link:\
+    `https://www.czso.cz/documents/10180/142756350/1300722101.xlsx`
+
+### Code book
+
+A full description of all the variables is available in the [GitHub project repo](https://yorkshireorange.github.io/PSY6422/codebook.html).
+
+### Preview
+
+#### Immunisation data
+
+*Preview (5 rows) without displaying IDs:*
+
+```{r preview_raw_vax_data, echo=FALSE, warning=FALSE}
+raw_sample <- read.csv(file="https://onemocneni-aktualne.mzcr.cz/api/v2/covid-19/ockovani-orp.csv", encoding = "UTF-8", nrows = 5)
+knitr::kable(raw_sample[2:13], "simple")%>% 
+  kable_styling(latex_options="scale_down")
+```
+
+\normalsize
+
+#### Total region population data
+
+*Pre-edited data set preview (3 rows):*
+
+```{r preview_raw_pop_data, echo = FALSE, warning=FALSE}
+raw_sample <- read.csv(file=here("data_raw", "2021-01-01_region_population.csv"), encoding = "UTF-8", nrows = 3)
+knitr::kable(raw_sample, "simple")
+```
+
+## Data Preparation
+
+The project starts with loading required packages and raw data - encoding is set to UTF-8.
+
+```{r data_wrangling_1, warning=FALSE, message=FALSE, eval=FALSE}
+
+# load packages
+if(!require(here)) install.packages("here",
+                                    repos = "http://cran.us.r-project.org")
+if(!require(tidyverse)) install.packages("tidyverse",
+                                         repos = "http://cran.us.r-project.org")
+if(!require(write)) install.packages("write",
+                                     repos = "http://cran.us.r-project.org")
+
+# import data
+url_vaccines <- "https://onemocneni-aktualne.mzcr.cz/api/v2/covid-19/ockovani-orp.csv"
+
+df <- read.csv(url_vaccines,
+               encoding = "UTF-8")
+
+pop_df <- read.csv(here("data_raw", "2021-01-01_region_population.csv"),
+                   encoding = "UTF-8")
+
+```
+
+In cleaning the data, the first step is to replace NA values with an integer (0) for subsequent data aggregation and manipulation. Redundant columns are dropped and relevant columns are renamed in English:
+
+```{r data_wrangling_2, warning=FALSE, message=FALSE, eval=FALSE}
+# NA → 0 for subsequent computations
+df[is.na(df)] <- 0
+
+# drop redundant columns
+df <- df %>% select(-c(
+  X.U.FEFF.id,
+  ockovaci_latka_kod,
+  orp_bydliste_nazev,
+  orp_bydliste_kod,
+  vekova_kategorie,
+  ockovaci_latka_nazev,
+  prvni_davka,
+  druha_davka,
+  posilujici_davka
+  )) %>% 
+
+# translate and simplify column names
+  rename(
+    date = datum,
+    region_name = kraj_bydliste_nazev,
+    region_id = kraj_bydliste_kod,
+    finished_vax = dokoncene_ockovani)
+```
+
+The observations are then summed to produce the total of completed immunisations per region:
+
+```{r data_wrangling_3, warning=FALSE, message=FALSE, eval=FALSE}
+# sum daily figures into totals
+df <- df %>% 
+  group_by(region_name, region_id) %>% 
+  summarise(finished_vax = sum(finished_vax))
+```
+
+The immunisation data set is then merged with the population (total region resident population per region). Statistical region codes are used for the merger:
+
+```{r data_wrangling_4, warning=FALSE, message=FALSE, eval=FALSE}
+# merge with population data
+df <- merge(df, pop_df, by.x = "region_id", by.y = "X.U.FEFF.region_id") %>% 
+  mutate(vax_per_pop = finished_vax / pop_total)
+```
+
+Finally, the data set is saved for further manipulation while the UTF-8 encoding is preserved.
+
+```{r data_wrangling_5, warning=FALSE, message=FALSE, eval=FALSE}
+# save tidy data (in UTF-8)
+readr::write_excel_csv(df, file = here("data_tidy", "cz_covax_regions_tidy.csv"))
+```
+
+### Tidy data
+
+*Preview (5 rows)*
+
+```{r preview_tidy_data, echo = FALSE, warning=FALSE}
+tidy_sample <- read.csv(file= here("data_tidy", "cz_covax_minimal.csv"), encoding = "UTF-8", nrows = 5)
+knitr::kable(tidy_sample, "simple")
+```
+
+## Visualisation
+
+### Implementation
+
+For visualisation, the required packages are loaded as well as the data. New simple features (sf) objects which provide the geo-spatial coordinates for visualising the regions (`kraje()`) on the map of the Czech Republic (as well as the map itself, `republika()`) is supplied by the `RCzechia` package. The sf object was not introduced in the data preparation stages as combining sf objects with data frames is difficult and the resulting files are large. Redundant information is removed from the sf object:
+
+```{r data_viz_1, message=FALSE, warning=FALSE}
+# load packages 
+if(!require(here)) install.packages("here",
+                                    repos = "http://cran.us.r-project.org")
+if(!require(tidyverse)) install.packages("tidyverse",
+                                         repos = "http://cran.us.r-project.org")
+if(!require(ggplot2)) install.packages("ggplot2",
+                                       repos = "http://cran.us.r-project.org")
+if(!require(RCzechia)) install.packages("RCzechia",
+                                        repos = "http://cran.us.r-project.org")
+if(!require(sf)) install.packages("sf",
+                                  repos = "http://cran.us.r-project.org")
+
+# load data
+df <- read.csv(here("data_tidy","cz_covax_regions_tidy.csv"),
+               encoding = "UTF-8")
+
+# load sf objects
+repub <- republika()
+
+regions <- kraje(resolution = "high") %>% 
+  select(-c(KOD_KRAJ, NAZ_CZNUTS3))
+```
+
+The tidy data set is then merged with the tidy sf object, and the new object is explicitly coerced into being an sf object (as not doing so has caused issues with the visualisation package recognising the sf data):
+
+```{r data_viz_2, warning=FALSE, message=FALSE}
+df <- merge(df, regions, by.x = "X.U.FEFF.region_id", by.y = "KOD_CZNUTS3")
+
+# df → sf object for ggplot2
+df <- st_as_sf(df)
+```
+
+The visualisation is initiated using the `ggplot2` package; the df is specified as well as custom aesthetics. The visualisation is labelled and formatted (see below for notes on aesthetics):
+
+```{r data_viz_3, warning=FALSE, message=FALSE}
+# specify df for ggplot
+ggmap <- ggplot(data = df) +
+  
+  # read regional geographic data
+  geom_sf(aes(fill = vax_per_pop), colour = "black", lwd = 0.3) +
+  
+  # read geographic data of the country
+  geom_sf(data = repub, color = "black", lwd = 0.6, fill = NA) +
+  
+  # set colour (suitable for visually impaired)
+  scale_fill_viridis_c(labels = scales::comma, direction = -1) +
+  
+  # label plot elements
+  labs(
+    x = "Latitude",
+    y = "Longitude",
+    title = "Covid-19-immunised to total region population ratio in the Czech Republic",
+       subtitle = "Ratio of fully immunised population (i.e., having received 2 doses of an approved Covid-19 vaccine) to total population per region",
+       caption = "Source: IHIS CR & CZSO
+    Note: Cases of immunisation of foregin nationals and individuals of unknown region residence excluded",
+       fill = "Immunised-to-total region \nresidents ratio") +
+  
+  # suitable theme (reading coords)
+  theme_bw() +
+  
+  # sub/title alignment
+  theme(plot.title = element_text(hjust = 0),
+        plot.subtitle = element_text(hjust = 0))
+```
+
+Finally, the visualisation is displayed:
+
+```{r data_viz_4, warning=FALSE, message=FALSE, eval = FALSE}
+# view
+ggmap
+```
+
+<center>
+
+```{r data_viz_5, echo = FALSE}
+# view
+ggmap
+```
+
+</center>
+
+### Aesthetics
+
+-   ***Colours:*** The colour scheme (viridis) was selected for its distinctive colours which guarantee good readability even if exported as black-and-white, and good readability for those who are colourblind. The scheme was inverted (`direction = -1`) so that the highest ratios could logically be represented as the darkest areas of the map.
+
+-   ***Fonts & lines:*** Arial, a serif font, is one of the recommended fonts as it ensures good readability for everyone, including individuals with learning difficulties. The border colour was set to black as it was the best at distinguishing among the regions out of all the colours used. The thickness of the lines was set through iterative trial-and-error changes to ensure the regions can be distinguished with ease and the country border is distinctive from the region borders.
+
+-   ***Theme:*** The `bw` theme was selected for its subtlety (does not distract from the map) and its grid that allows to identify the regions based on latitude and longitude coordinates provided.
+
+-   ***Alignment:*** The layout of the alignment freely follows the APA-7 layout (except for the left footnote alignment, which felt more natural to the author). The title and the subtitle provide essential information for the interpretation while the footnote references the data and provides information about phenomena that need to be taken into account while reading and interpreting the map.
+
+## Conclusions
+
+### Objectives & Questions
+
+The project successfully visualised the ratio of fully immunised to total population per region. The map clearly indicates that the ratios of completed immunisations to total region population are heterogeneous with the difference among the region with the highest and lowest immunisation ratio being roughly 10 %.
+
+The highest ratio is in the capital; this might be because of the abundance of healthcare and vaccination facilities, attained education, socio-economic status, and other associated markers; those who move to the capital often come for better employment opportunities, have higher levels of education and are socially and economically stable - they believe in the system and the benefits of being vaccinated. Politically, residents of these regions often vote for progressive liberal-conservative parties.
+
+The lowest ratio is by the Polish borders; these predominantly industrial regions are among the poorer regions of the country; the overall educational attainment as well as SES tend to be lower, as is the trust in the system. Politically, residents of these regions often vote for populist and/or extremist parties (typically the communist party).
+
+### Limitations & suggestions
+
+-   *Dropping data of foreign nationals and untraceable residents:* As a pre-existing package with geo-spatial data was used for the visualisation, observations not tied to any regions were dropped. An alternative to this solution would be to create polygons outside of the map that would represent unmatched cases or the immunisation of foreign nationals.
+-   *Interactivity, variable retention, & aggregation:* In order to produce a static visualisation, the data set variables (which otherwise provide rich data) has been heavily aggregated. This project could therefore be extended by using some of the dropped/aggregated variables. For example, the dates could be aggregated into weekly or monthly observations and the `gganimate` package could be used to chow changes in the vaccination ration in regions over time. Alternatively, using the `shiny` package could allow viewers to subset data in a desired way (e.g., by letting them sort by age groups, vaccines administered, or using a slider to view the time trends in vaccination).
+
+## Appendices
+
+### References
+
+1.  Portál otevřených dat (Czech Open Data Portal) - <https://data.gov.cz/>
+
+2.  Onemocnění aktuálně ČR (National Dashboard of Active Diseases) - <https://onemocneni-aktualne.mzcr.cz>
+
+3.  Ministerstvo zdravotnictví ČR (Ministry of Health of the Czech Republic) - <https://www.mzcr.cz>
+
+4.  Ústav zdravotnických informací a statistiky ČR (Institute of Health Information and Statistics of the Czech Republic) - <https://www.uzis.cz/index-en.php>
+
+5.  Český statistický úřad (Czech Statistical Office) - <https://www.czso.cz/csu/czso/home>

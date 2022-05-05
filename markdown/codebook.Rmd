@@ -1,0 +1,104 @@
+---
+title: "PSY6422 Project"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Covid−19 Regional Immunisation in the Czech Republic
+
+### Code book
+
+This code book provides information about data sets used in the PSY6422 project.
+
+-   Project presentation: <https://yorkshireorange.github.io/PSY6422/>
+
+-   Project repo: <https://github.com/yorkshireorange/PSY6422>
+
+*Please not that where variables were dropped and not used further, their Czech name is referenced. Variables that have been manipulated (and therefore translated) are labelled in English.*
+
+### 1) Immunisation data
+
+-   The data set is in the long format (i.e., several rows per observation to display to display unique combinations of all recorded variables).
+
+#### **Used variables**
+
+-   `region_name`: The official names of the administrative regions in Czech (see **Notes**).
+
+    -   Uncategorised entries were dropped.
+
+-   `region_id`: The statistical codes of the administrative regions within the European NUTS hierarchy (see **Notes**).
+
+    -   Uncategorised entries were dropped.
+
+-   `finished_vax`: The number of individuals who completed their Covid-19 immunisation.
+
+#### **Unused variables**
+
+-   `id`: A pre-assigned ID, possibly for internal identification purposes.
+
+-   `date`: The date when individual observations were reported.
+
+-   `orp_bydliste_nazev`: The official names of the administrative districts in Czech (see **Notes**).
+
+    -   Contains both labelled and unlabelled uncategorised data.
+
+-   `orp_bydliste_kod`: The statistical codes of the administrative districts within the Statistical Meta-information System (see **Notes**).
+
+-   Contains unlabelled uncategorised data.
+
+-   `vekova_kategorie`: The age group immunisation recipients fall within.
+
+-   `ockovaci_latka_nazev`: The name of the European Medicines Agency-approved vaccine that was administered.
+
+-   `ockovaci_latka_kod`: A code assigned to the approved vaccines, possibly for internal use of the Ministry.
+
+-   `prvni_davka`: The number of individuals falling within observed categories who received the first dose of a Covid-19 vaccine.
+
+-   `druha_davka`: A number of individuals falling within observed categories who received the second dose of a Covid-19 vaccine.
+
+-   `posilujici_davka`: A number of individuals falling within observed categories who received the booster dose of a Covid-19 vaccine.
+
+### 2) Population data
+
+-   The data set is not in a machine readable format. It is separated into several groups for which the data are provided: the Czech Republic, Administrative regions (used in the visualisation), Administrative districts.
+
+#### **Used variables**
+
+-   `pop_total`: The number of permanent residents per region
+
+-   `region_id`: The statistical codes of the administrative regions within the European NUTS hierarchy (see **Notes**).
+
+#### **Unused variables**
+
+-   `Population - Males`: The number of male residents per category.
+
+-   `Population - Females`: The number of female residents per category.
+
+-   `Average age - Total`: Total average age per category.
+
+-   `Average age - Males`: Average male age per category.
+
+-   `Average age - Females`: Average female age per category.
+
+### 3) Computed variables
+
+-   `vax_per_pop`: The proportion of individuals with completed Covid-19 immunisation per total region population; computed by dividing `finished_vax` (Immunisation data) by `pop_total` (Population data).
+
+### Notes
+
+1.  *Administrative districts of municipalities with extended competence:* the smallest administrative districts in the Czech Republic, centered around 205 municipalities with extended competence [1].
+
+2.  *Administrative regions:* A total of 14 self-governing areas of the Czech republic, roughly equivalent to UK counties or groups of unitary authorities [2].
+
+3.  *NUTS:* Eurostat's Nomenclature of Territorial Units for Statistics used for comparison of devolved administration units across the EU as well as funding purposes [3].
+
+### References
+
+1.  Wikipedia: Districts of the Czech Republic: Municipalities with extended competence - <https://en.wikipedia.org/wiki/Districts_of_the_Czech_Republic#Municipalities_with_extended_competence>
+
+2.  Wikipedia: Regions of the Czech Republic - <https://en.wikipedia.org/wiki/Regions_of_the_Czech_Republic>
+
+3.  Eurostat: NUTS - <https://ec.europa.eu/eurostat/web/nuts/background>
